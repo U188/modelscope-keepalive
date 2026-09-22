@@ -1,0 +1,57 @@
+name: ModelScope Spaces Keep-Alive
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # 每 10 分钟（UTC）。GitHub cron 最小粒度 5 分钟，且高峰期会延迟（实测 5~15 分钟），
+    # 创空间是「请求闲置」型休眠（有人访问即保持/唤醒），10 分钟足够。
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping 两个创空间（保活主体）
+        shell: bash
+        run: |
+          SPACE_URLS=(
+            "https://www.modelscope.cn/studios/u18888/cm"
+            "https://www.modelscope.ai/studios/u1888888/cm"
+          )
+          fail=0
+          for URL in "${SPACE_URLS[@]}"; do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" -L --max-time 20 \
+                     -A 'Mozilla/5.0' "$URL" || echo FAIL)
+            echo "→ $URL  HTTP $CODE"
+            [ "$CODE" = "200" ] || fail=1
+          done
+          if [ "$fail" != "0" ]; then
+            echo "::error::有 URL 未返回 200（保活可能没生效）"
+            exit 1
+          fi
+          echo "✅ 两个空间都已打到"
+
+      - name: 校验空间状态（HTTP 200 不是有效判据，改用平台接口）
+        shell: bash
+        run: |
+          # 站点的 SPA 对不存在的地址也返 200，所以必须查信息接口。
+          # 注意：该接口会随实体状态浮动（同一地址可能一次 200 一次 404），只作参考。
+          check() {  # $1=站点域名(不含 www.)  $2=user/space
+            R=$(curl -s -o /tmp/j -w "%{http_code}" -A 'Mozilla/5.0' --max-time 20 \
+                  "https://www.$1/api/v1/studio/$2")
+            if [ "$R" = "200" ]; then
+              S=$(python3 -c "import json;print(json.load(open('/tmp/j')).get('Data',{}).get('Status'))" 2>/dev/null)
+              echo "✅ $1 → $2 | Status=$S"
+            else
+              echo "⚠️ $1 → $2 查不到（HTTP $R）"
+            fi
+          }
+          # 国内版和国际版是独立站点、独立账号，绝不能跨域套判据
+          check modelscope.cn u18888/cm
+          check modelscope.ai u1888888/cm

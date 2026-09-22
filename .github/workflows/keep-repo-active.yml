@@ -1,0 +1,41 @@
+name: Keep Repo Active
+
+# 为什么需要这个：
+# GitHub 会在「仓库 60 天没有任何活动」时自动禁用该仓库的 scheduled workflow
+# （状态变 disabled_inactivity，且不会自动恢复）。本仓库的保活全靠 schedule，
+# 一旦被禁就等于保活彻底失效 —— 之前 is361/modelscope-keepalivess 就是这么死的：
+# 最后 push 2026-05-29，60 天后 2026-07-28 被自动禁用，最后一次运行正是那天。
+#
+# 所以这里每月提交一次 heartbeat，制造仓库活动，让 60 天计时器永远归零。
+# 月度（约 30 天）< 60 天，自我维持；且本 workflow 自己也需要 60 天内跑过一次，
+# 月频满足这个条件。
+
+on:
+  schedule:
+    - cron: '0 3 1 * *'   # 每月 1 号 03:00 UTC = 11:00 北京时间
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 提交 heartbeat（制造仓库活动）
+        shell: bash
+        run: |
+          date -u '+%F %T UTC' > heartbeat.txt
+          git config user.name  "keepalive-bot"
+          git config user.email "keepalive-bot@users.noreply.github.com"
+          git add heartbeat.txt
+          if git diff --cached --quiet; then
+            echo "无变化，跳过提交"
+          else
+            git commit -m "chore: heartbeat $(date -u +%F)"
+            git push
+            echo "✅ 已提交 heartbeat"
+          fi
